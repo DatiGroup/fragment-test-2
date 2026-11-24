@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CounterEvent",
+  "description": "Event consumed from the f1.events topic (produced by fragment-1). Contains counter change information.",
+  "type": "object",
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this event (UUID)."
+    },
+    "fragment_id": {
+      "type": "string",
+      "description": "Identifier of the fragment that produced the event.",
+      "example": "test-fragment-1"
+    },
+    "counter": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The new/current counter value after the increment."
+    },
+    "delta": {
+      "type": "integer",
+      "description": "The amount the counter changed by (e.g., +1).",
+      "example": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp indicating when the event was produced."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Optional free-form metadata (e.g., source, host).",
+      "additionalProperties": true
+    }
+  },
+  "required": ["event_id", "fragment_id", "counter", "timestamp"],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "event_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "fragment_id": "test-fragment-1",
+      "counter": 42,
+      "delta": 1,
+      "timestamp": "2026-01-08T12:34:56Z",
+      "metadata": { "source": "worker", "host": "worker-1" }
+    }
+  ]
+}

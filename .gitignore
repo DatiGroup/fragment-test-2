@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+.venv/
+api/.venv/
+
+# Editor settings
+.vscode/
+.idea/
+
+# Misc
+*.egg-info/
+
+# Claude Code
+.claude/
+
+# Local environment files (copy .env.example to .env)
+.env

@@ -1,0 +1,262 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Test Fragment 2 - Event Log API",
+    "version": "1.0.0",
+    "description": "OpenAPI specification for the Event Log API used by test-fragment-2.\nThis fragment consumes events from fragment-1's Kafka topic and stores them in an event log database.\nEndpoints: /healthcheck, /events (GET/POST), /events/{event_id} (GET)."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8001",
+      "description": "Local development server"
+    }
+  ],
+  "paths": {
+    "/healthcheck": {
+      "get": {
+        "summary": "Health check",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Service health",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "summary": "List event logs",
+        "operationId": "listEvents",
+        "parameters": [
+          {
+            "name": "skip",
+            "in": "query",
+            "description": "Number of records to skip",
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of records to return",
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "description": "Filter by source fragment ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of event logs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EventLogOut"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create event log entry (internal)",
+        "operationId": "createEvent",
+        "description": "Internal endpoint used by the worker to store events consumed from Kafka.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventLogIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Event logged successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventLogOut"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Duplicate event (already logged)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events/{event_id}": {
+      "get": {
+        "summary": "Get event by ID",
+        "operationId": "getEvent",
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "description": "The source event ID (UUID from the originating fragment)",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event log entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventLogOut"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Event not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "ok"
+          }
+        },
+        "required": ["status"]
+      },
+      "EventLogIn": {
+        "type": "object",
+        "description": "Input schema for creating an event log entry (received from Kafka via worker)",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier from the source event"
+          },
+          "fragment_id": {
+            "type": "string",
+            "description": "ID of the fragment that produced the event",
+            "example": "test-fragment-1"
+          },
+          "counter": {
+            "type": "integer",
+            "description": "Counter value from the source event"
+          },
+          "delta": {
+            "type": "integer",
+            "description": "Change amount (optional)"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp from the source event"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Optional metadata from the source event",
+            "additionalProperties": true
+          }
+        },
+        "required": ["event_id", "fragment_id", "counter", "timestamp"]
+      },
+      "EventLogOut": {
+        "type": "object",
+        "description": "Output schema for event log entries",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "Internal database ID"
+          },
+          "event_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Original event ID from source"
+          },
+          "source_fragment_id": {
+            "type": "string",
+            "description": "ID of the fragment that produced the event"
+          },
+          "event_type": {
+            "type": "string",
+            "description": "Type of event",
+            "example": "counter_update"
+          },
+          "payload": {
+            "type": "object",
+            "description": "Full original event payload",
+            "additionalProperties": true
+          },
+          "event_timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp from the source event"
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp when the event was received and logged"
+          }
+        },
+        "required": ["id", "event_id", "source_fragment_id", "event_type", "payload", "event_timestamp", "received_at"]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "Error message"
+          }
+        },
+        "required": ["detail"]
+      }
+    }
+  }
+}

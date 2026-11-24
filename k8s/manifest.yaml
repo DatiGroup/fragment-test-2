@@ -1,0 +1,266 @@
+# Kubernetes manifest for test-fragment-2 (db, api, worker)
+#
+# Variable Substitution Required:
+# This manifest uses environment variable substitution for image tags and references Kubernetes Secrets for database credentials.
+#
+# Required Variables:
+#   IMAGE_REPOSITORY - Container registry path (e.g., registry.example.com/mygroup/myproject)
+#   IMAGE_TAG        - Image tag or SHA (e.g., v1.0.0, sha-abc123, latest)
+#   SECRET_SOURCE    - Name of the Kubernetes Secret containing database credentials
+#   NAMESPACE        - Kubernetes namespace for deployment (e.g., counter-app, counter-app-dev, counter-app-prod)
+#   FRAGMENT_ID      - Unique identifier for this fragment instance (e.g., test-fragment-2, fragment-tenant-a)
+#
+# Optional Variables (with defaults):
+#   KAFKA_BOOTSTRAP_SERVERS - Kafka broker addresses, comma-separated (default: empty/disabled)
+#   KAFKA_TOPIC             - Kafka topic name to consume from (default: f1.events)
+#   KAFKA_CONSUMER_GROUP    - Kafka consumer group ID (default: test-fragment-2-consumer)
+#
+# Required Kubernetes Secret Keys (in ${SECRET_SOURCE}):
+#   PRIMARY_DB_NAME  - Database name (e.g., event_log_db)
+#   DB_HOST          - Database hostname or IP (e.g., postgres.database.svc.cluster.local)
+#   DB_PORT          - Database port (e.g., 5432)
+#   DB_USER          - Database username
+#   DB_PASSWORD      - Database password
+#
+# Environment Variables by Deployment:
+#
+# API Deployment:
+#   From Secret (${SECRET_SOURCE}):
+#     - DB_NAME (from key: PRIMARY_DB_NAME)
+#     - DB_HOST (from key: DB_HOST)
+#     - DB_PORT (from key: DB_PORT)
+#     - DB_USER (from key: DB_USER)
+#     - DB_PASSWORD (from key: DB_PASSWORD)
+#   Constructed:
+#     - DATABASE_URL: postgresql://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)
+#
+# Worker Deployment (Kafka Consumer -> Event Logger):
+#   Direct values:
+#     - KAFKA_BOOTSTRAP_SERVERS: "${KAFKA_BOOTSTRAP_SERVERS:-}" (default: empty/disabled)
+#     - KAFKA_TOPIC: "${KAFKA_TOPIC:-f1.events}" (default: f1.events - listens to fragment-1 events)
+#     - KAFKA_CONSUMER_GROUP: "${KAFKA_CONSUMER_GROUP:-test-fragment-2-consumer}"
+#     - API_URL: "http://${FRAGMENT_ID}-api:8000" (for storing events in event_log table)
+#     - FRAGMENT_ID: "${FRAGMENT_ID}"
+#
+# Step 1: Create the database credentials secret:
+#   export NAMESPACE=counter-app-dev
+#   kubectl create namespace $NAMESPACE
+#   kubectl create secret generic db-credentials \
+#     --namespace=$NAMESPACE \
+#     --from-literal=PRIMARY_DB_NAME=event_log_db \
+#     --from-literal=DB_HOST=postgres.database.svc.cluster.local \
+#     --from-literal=DB_PORT=5432 \
+#     --from-literal=DB_USER=counter_user \
+#     --from-literal=DB_PASSWORD=secure_password
+#
+# Step 2: Apply the manifest with envsubst:
+#   export IMAGE_REPOSITORY=registry.example.com/mygroup/myproject
+#   export IMAGE_TAG=v1.0.0
+#   export SECRET_SOURCE=db-credentials
+#   export NAMESPACE=counter-app-dev
+#   export FRAGMENT_ID=test-fragment-2-dev
+#   export KAFKA_BOOTSTRAP_SERVERS=kafka.messaging.svc.cluster.local:9092  # Optional: leave empty to disable Kafka
+#   export KAFKA_TOPIC=f1.events  # Optional: defaults to f1.events if not set
+#   export KAFKA_CONSUMER_GROUP=test-fragment-2-consumer  # Optional: defaults to test-fragment-2-consumer
+#   envsubst < manifest.yaml | kubectl apply -f -
+#
+# Alternative: Use Helm or Kustomize for variable management and templating.
+#
+# Multi-Deployment Support:
+# This manifest supports multiple deployments in the same cluster by parameterizing:
+# - NAMESPACE: Isolates deployments (e.g., counter-app-dev, counter-app-prod, counter-app-tenant-a)
+# - FRAGMENT_ID: Makes service names unique (e.g., test-fragment-2-dev, test-fragment-2-prod)
+#
+# Examples:
+#   Development (without Kafka):
+#     NAMESPACE=counter-app-dev FRAGMENT_ID=test-fragment-2-dev envsubst < manifest.yaml | kubectl apply -f -
+#   Production (with Kafka and custom topic):
+#     NAMESPACE=counter-app-prod FRAGMENT_ID=test-fragment-2-prod \
+#     KAFKA_BOOTSTRAP_SERVERS=kafka-prod.messaging.svc.cluster.local:9092 \
+#     KAFKA_TOPIC=prod.f1.events envsubst < manifest.yaml | kubectl apply -f -
+#   Multi-tenant (with tenant-specific Kafka configuration):
+#     NAMESPACE=tenant-a FRAGMENT_ID=fragment-tenant-a \
+#     KAFKA_BOOTSTRAP_SERVERS=kafka.messaging.svc.cluster.local:9092 \
+#     KAFKA_TOPIC=tenant-a.events envsubst < manifest.yaml | kubectl apply -f -
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${NAMESPACE}
+---
+# Optional: Create the Secret using a YAML manifest instead of kubectl command:
+# Uncomment the section below and apply it before deploying the application:
+#
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: ${SECRET_SOURCE}
+#   namespace: ${NAMESPACE}
+# type: Opaque
+# stringData:
+#   PRIMARY_DB_NAME: event_log_db
+#   DB_HOST: postgres.database.svc.cluster.local
+#   DB_PORT: "5432"
+#   DB_USER: counter_user
+#   DB_PASSWORD: secure_password
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${FRAGMENT_ID}-api
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: ${FRAGMENT_ID}-api
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${FRAGMENT_ID}-api
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${FRAGMENT_ID}-api
+  template:
+    metadata:
+      labels:
+        app: ${FRAGMENT_ID}-api
+    spec:
+      containers:
+        - name: api
+          # Image is parameterized: set IMAGE_REPOSITORY and IMAGE_TAG (see top of file)
+          image: "${IMAGE_REPOSITORY}/test-fragment-2-api:${IMAGE_TAG}"
+          resources:
+            limits:
+              memory: "512Mi"
+            requests:
+              memory: "128Mi"
+          ports:
+            - containerPort: 8000
+          # Environment Variables Used by API:
+          # - DB_NAME: Database name (from Secret)
+          # - DB_HOST: Database hostname (from Secret)
+          # - DB_PORT: Database port (from Secret)
+          # - DB_USER: Database username (from Secret)
+          # - DB_PASSWORD: Database password (from Secret)
+          # - DATABASE_URL: Full connection string (constructed from above)
+          env:
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: ${SECRET_SOURCE}
+                  key: PRIMARY_DB_NAME
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: ${SECRET_SOURCE}
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: ${SECRET_SOURCE}
+                  key: DB_PORT
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ${SECRET_SOURCE}
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ${SECRET_SOURCE}
+                  key: DB_PASSWORD
+            - name: DATABASE_URL
+              value: "postgresql://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)"
+            # Caller authentication (dt-fragment-auth). All set by the platform.
+            - name: FRAGMENT_AUTH_MODE
+              value: "${FRAGMENT_AUTH_MODE:-enforce}"
+            - name: FRAGMENT_AUTH_JWKS_URL
+              value: "${FRAGMENT_AUTH_JWKS_URL}"
+            - name: FRAGMENT_AUTH_ISSUER
+              value: "${FRAGMENT_AUTH_ISSUER}"
+            - name: FRAGMENT_AUTH_AUDIENCE
+              value: "${FRAGMENT_AUTH_AUDIENCE}"
+            - name: FRAGMENT_AUTH_DT_API_URL
+              value: "${FRAGMENT_AUTH_DT_API_URL}"
+            - name: FRAGMENT_AUTH_TWIN_CLIENT_ID
+              value: "${FRAGMENT_AUTH_TWIN_CLIENT_ID}"
+            - name: DIGITAL_TWIN_ID
+              value: "${DIGITAL_TWIN_ID}"
+            - name: FRAGMENT_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ${FRAGMENT_AUTH_SECRET}
+                  key: FRAGMENT_INTERNAL_TOKEN
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${FRAGMENT_ID}-worker
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${FRAGMENT_ID}-worker
+  template:
+    metadata:
+      labels:
+        app: ${FRAGMENT_ID}-worker
+    spec:
+      containers:
+        - name: worker
+          # Image is parameterized: set IMAGE_REPOSITORY and IMAGE_TAG (see top of file)
+          image: "${IMAGE_REPOSITORY}/test-fragment-2-worker:${IMAGE_TAG}"
+          resources:
+            limits:
+              memory: "512Mi"
+            requests:
+              memory: "128Mi"
+          # Environment Variables Used by Worker (Kafka Consumer):
+          # - KAFKA_BOOTSTRAP_SERVERS: Kafka broker addresses (uses ${KAFKA_BOOTSTRAP_SERVERS}, default: empty/disabled)
+          # - KAFKA_TOPIC: Kafka topic name to consume from (default: f1.events - listens to fragment-1 events)
+          # - KAFKA_CONSUMER_GROUP: Consumer group ID (default: test-fragment-2-consumer)
+          # - API_URL: URL to POST events for storage (http://${FRAGMENT_ID}-api:8000)
+          # - FRAGMENT_ID: Unique identifier for this fragment instance
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "${KAFKA_BOOTSTRAP_SERVERS:-}"
+            - name: KAFKA_TOPIC
+              value: "${KAFKA_TOPIC:-f1.events}"
+            - name: KAFKA_CONSUMER_GROUP
+              value: "${KAFKA_CONSUMER_GROUP:-test-fragment-2-consumer}"
+            - name: API_URL
+              value: "http://${FRAGMENT_ID}-api:8000"
+            - name: FRAGMENT_ID
+              value: "${FRAGMENT_ID}"
+            # Presented to this fragment's own API (X-Fragment-Token).
+            - name: FRAGMENT_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ${FRAGMENT_AUTH_SECRET}
+                  key: FRAGMENT_INTERNAL_TOKEN
+# End of manifest

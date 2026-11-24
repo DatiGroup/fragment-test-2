@@ -1,0 +1,79 @@
+apiVersion: dtb.fragments/v1
+kind: Fragment
+
+metadata:
+  id: test-fragment-2
+  name: "Test Fragment 2"
+  version: "${VERSION}"
+  description: "Test Fragment F2 demonstrating a digital twin application with API and worker components."
+  owner: team-digitdevops
+  license: Apache-2.0
+  tags: [fragment, digital-twin]
+
+spec:
+  deployment:
+    # Each component's `path` is a folder with a Dockerfile. At publish time the
+    # image is built and `path` is replaced with an imageRegistry `ref`; the
+    # Kubernetes manifest (/k8s/manifest.yaml) is referenced the same way.
+    components:
+      - name: worker
+        path: /worker
+        resources:
+          - key: kafka
+            type: kafka
+            topics:
+              - key: f1.events
+                # Placeholder only — the actual env value comes from the
+                # orchestrator's `KAFKA_CONSUMER_GROUP` (platform default:
+                # "{short_id}-{short_frag}-consumer-group"), overridable per
+                # connection via config.overrides.kafkaConsumerGroup.
+                kafkaConsumerGroup: ${KAFKA_CONSUMER_GROUP}
+
+      - name: api
+        path: /api
+        resources:
+          - key: primary
+            type: database
+
+    # Datastores are provisioned by the platform; their connection settings
+    # reach the components through the Kubernetes Secret named in k8s/manifest.yaml.
+    datastores:
+      - key: primary
+        type: database
+        engine: postgres
+        description: "Main persistence store for Fragment 2"
+
+      - key: kafka
+        type: kafka
+        topics:
+          - key: f1.events # consumed from test-fragment-1
+            description: "Counter events consumed from Fragment 1"
+
+  contracts:
+    produces:
+      rest:
+        openapi:
+          key: event-log-api
+          format: openapi-json
+          version: "${VERSION}"
+          path: "/schemas/produces/openapi/produces.openapi.json"
+          description: "OpenAPI document describing Event Log REST API produced by this fragment."
+
+    consumes:
+      kafka:
+        topics:
+          - key: f1.events
+            description: "Counter events consumed from fragment-1."
+            payload:
+              dataType: com.example.f1.CounterEvent
+              contentType: application/json
+              schema:
+                format: jsonschema
+                version: "${VERSION}"
+                path: /schemas/consumes/kafka/f1.events.counter-event.v1.json
+
+readme:
+  path: /README.md
+
+notes:
+  - "Consumes test-fragment-1's f1.events topic and serves the event log over REST (/events), which test-fragment-3 polls."

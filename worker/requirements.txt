@@ -1,0 +1,5 @@
+python-dotenv==1.1.1
+# Pinned: 3.x reworked the networking layer; the group rebalance is slower,
+# which matters for any code that inspects assignment() right after connecting.
+kafka-python==3.0.11
+requests==2.31.0
